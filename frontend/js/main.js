@@ -1,4 +1,7 @@
-const API = 'http://localhost:3000/api';
+// Detectar si estamos en producción o desarrollo
+const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:3000/api'
+  : 'https://final-production.up.railway.app/api';
 
 function register() {
   fetch(`${API}/usuarios/register`, {
