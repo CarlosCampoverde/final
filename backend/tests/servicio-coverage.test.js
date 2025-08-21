@@ -3,40 +3,70 @@ const app = require('../app');
 const Servicio = require('../models/Servicio');
 
 describe('Servicio Coverage Tests', () => {
+  // Usar un identificador único para cada suite de tests
+  const testPrefix = `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
   beforeEach(async () => {
-    await Servicio.deleteMany({});
+    // Limpiar solo los servicios de test para evitar interferencia
+    await Servicio.deleteMany({ nombre: { $regex: /^test_|Test|Servicio Test/ } });
+  });
+
+  afterEach(async () => {
+    // Limpiar después de cada test también
+    await Servicio.deleteMany({ nombre: { $regex: /^test_|Test|Servicio Test/ } });
   });
 
   afterAll(async () => {
-    await Servicio.deleteMany({});
+    await Servicio.deleteMany({ nombre: { $regex: /^test_|Test|Servicio Test/ } });
   });
 
   describe('Servicio API Coverage', () => {
     it('debería obtener lista de servicios vacía', async () => {
-      // Asegurar que la base de datos esté limpia
-      await Servicio.deleteMany({});
+      // Limpiar servicios de test específicamente
+      await Servicio.deleteMany({ nombre: { $regex: /^test_|Test|Servicio Test/ } });
       
       const response = await request(app)
         .get('/api/servicios');
 
       expect(response.status).toBe(200);
       expect(Array.isArray(response.body)).toBe(true);
-      expect(response.body.length).toBe(0);
+      // Solo verificar que existe, no la cantidad exacta ya que puede haber otros servicios
+      expect(response.body.filter(s => s.nombre.match(/^test_|Test|Servicio Test/)).length).toBe(0);
     });
 
     it('debería crear un servicio directamente', async () => {
+      const nombreUnico = `test_servicio_${Date.now()}`;
+      
+      // Verificar que empezamos sin nuestro servicio específico
+      const serviciosAntes = await Servicio.find({ nombre: nombreUnico });
+      expect(serviciosAntes.length).toBe(0);
+      
       const nuevoServicio = new Servicio({
-        nombre: 'Servicio Test',
+        nombre: nombreUnico,
         descripcion: 'Descripción test'
       });
-      await nuevoServicio.save();
+      const servicioGuardado = await nuevoServicio.save();
+      
+      // Verificar que se guardó correctamente
+      expect(servicioGuardado._id).toBeDefined();
+      expect(servicioGuardado.nombre).toBe(nombreUnico);
 
+      // Verificar que está en la base de datos
+      const serviciosEnDB = await Servicio.find({ nombre: nombreUnico });
+      expect(serviciosEnDB.length).toBe(1);
+
+      // Hacer la petición HTTP
       const response = await request(app)
         .get('/api/servicios');
 
       expect(response.status).toBe(200);
-      expect(response.body.length).toBe(1);
-      expect(response.body[0].nombre).toBe('Servicio Test');
+      expect(Array.isArray(response.body)).toBe(true);
+      
+      // Buscar nuestro servicio específico en la respuesta
+      const nuestroServicio = response.body.find(s => s.nombre === nombreUnico);
+      expect(nuestroServicio).toBeDefined();
+      expect(nuestroServicio.nombre).toBe(nombreUnico);
+      expect(nuestroServicio.descripcion).toBe('Descripción test');
     });
 
     it('debería cubrir campos requeridos en POST', async () => {
