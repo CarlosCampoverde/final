@@ -1,0 +1,17 @@
+# Railway ignore file - archivos que no se suben a Railway
+.git/
+node_modules/
+coverage/
+tests/
+*.test.js
+.env
+.env.local
+.env.example
+k6-*
+performance-*
+*.log
+.vscode/
+.github/
+frontend/
+scripts/
+*.md
