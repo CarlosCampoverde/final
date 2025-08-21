@@ -1,0 +1,61 @@
+{
+  "name": "proyectop2preubas",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "test:ci": "jest --coverage --ci --watchAll=false",
+    "test:unit": "jest --testPathPattern=tests",
+    "start": "node backend/server.js",
+    "dev": "node backend/server.js",
+    "perf": "k6 run tests/k6/performance-test.js",
+    "perf:ramp": "k6 run tests/k6/scenarios/usuarios-ramp.js",
+    "perf:spike": "k6 run tests/k6/scenarios/servicios-spike.js",
+    "perf:soak": "k6 run tests/k6/scenarios/reservas-soak.js",
+    "perf:all": "npm run perf:ramp && npm run perf:spike && npm run perf:soak",
+    "perf:simple": "k6 run tests/k6/simple-test.js",
+    "perf:ci": "k6 run --summary-export=performance-ci-summary.json tests/k6/performance-test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.0",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.16.3"
+  },
+  "devDependencies": {
+    "jest": "^30.0.4",
+    "supertest": "^7.1.3"
+  },
+  "jest": {
+    "setupFiles": [
+      "<rootDir>/backend/setupTests.js"
+    ],
+    "testTimeout": 15000,
+    "globalTeardown": "<rootDir>/backend/jest.teardown.js",
+    "collectCoverageFrom": [
+      "backend/**/*.js",
+      "!backend/tests/**"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "statements": 70,
+        "branches": 70,
+        "functions": 40,
+        "lines": 70
+      }
+    },
+    "coverageReporters": [
+      "json",
+      "lcov",
+      "text",
+      "html"
+    ]
+  }
+}

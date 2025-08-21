@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dashboard - Gym</title>
+  <link rel="stylesheet" href="css/estilos.css" />
+</head>
+<body class="dashboard">
+
+  <h2 id="bienvenida">Hola, Bienvenido</h2>
+
+  <div class="dashboard-columns">
+    <div class="dashboard-column">
+      <h3>Reservar Servicio</h3>
+      <form id="formReserva">
+        <label for="servicio">Servicio</label>
+        <select id="servicio" required></select>
+
+        <label for="fecha">Fecha</label>
+        <input type="date" id="fecha" required />
+
+        <label for="hora">Hora</label>
+        <input type="time" id="hora" required />
+
+        <button type="submit">Reservar</button>
+      </form>
+
+      <h3>Mis Reservas</h3>
+      <ul id="listaReservas"></ul>
+    </div>
+
+    <div class="dashboard-column">
+      <div class="admin-section" id="adminSection" style="display:none;">
+        <h3>Agregar Servicio (Solo Admin)</h3>
+        <form id="formServicio">
+          <input type="text" id="nombreServicio" placeholder="Nombre servicio" required />
+          <button type="submit">Agregar Servicio</button>
+        </form>
+
+        <h3>Servicios Existentes</h3>
+        <ul id="listaServicios"></ul>
+      </div>
+    </div>
+  </div>
+
+  <button id="btnLogout">Cerrar Sesión</button>
+
+  <script>
+    const token = localStorage.getItem('token');
+    if (!token) {
+      alert('No estás autenticado');
+      window.location.href = 'login.html';
+    }
+
+    let usuarioRol = '';
+    let decoded;
+
+    async function obtenerUsuario() {
+      const payload = token.split('.')[1];
+      decoded = JSON.parse(atob(payload));
+      usuarioRol = decoded.rol || 'user';
+      document.getElementById('bienvenida').innerText = `Hola, ${usuarioRol === 'admin' ? 'Angelo (Admin)' : 'Usuario'}`;
+      if (usuarioRol === 'admin') {
+        document.getElementById('adminSection').style.display = 'block';
+      }
+    }
+
+    async function cargarServicios() {
+      const res = await fetch('http://localhost:3000/api/servicios', {
+        headers: { 'Authorization': token }
+      });
+      const servicios = await res.json();
+
+      const ul = document.getElementById('listaServicios');
+      ul.innerHTML = '';
+      servicios.forEach(s => {
+        const li = document.createElement('li');
+        li.textContent = s.nombre;
+        if (usuarioRol === 'admin') {
+          const btnEliminar = document.createElement('button');
+          btnEliminar.textContent = 'Eliminar';
+          btnEliminar.style.marginLeft = '10px';
+          btnEliminar.addEventListener('click', () => eliminarServicio(s._id));
+          li.appendChild(btnEliminar);
+        }
+        ul.appendChild(li);
+      });
+
+      const select = document.getElementById('servicio');
+      select.innerHTML = '';
+      servicios.forEach(servicio => {
+        const option = document.createElement('option');
+        option.value = servicio._id;
+        option.textContent = servicio.nombre;
+        select.appendChild(option);
+      });
+    }
+
+    async function eliminarServicio(id) {
+      if (!confirm('¿Seguro que quieres eliminar este servicio?')) return;
+      const res = await fetch(`http://localhost:3000/api/servicios/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        alert('Servicio eliminado');
+        cargarServicios();
+      } else {
+        alert('Error al eliminar servicio');
+      }
+    }
+
+    async function cargarReservas() {
+      const res = await fetch(`http://localhost:3000/api/reservas/${decoded.id}`, {
+        headers: { 'Authorization': token }
+      });
+      const reservas = await res.json();
+      const ul = document.getElementById('listaReservas');
+      ul.innerHTML = '';
+      reservas.forEach(r => {
+        const li = document.createElement('li');
+        li.textContent = `${r.servicioId?.nombre || 'Servicio'} - ${r.fecha} ${r.hora}`;
+        if (usuarioRol === 'admin') {
+          const btnEliminar = document.createElement('button');
+          btnEliminar.textContent = 'Eliminar';
+          btnEliminar.style.marginLeft = '10px';
+          btnEliminar.addEventListener('click', () => eliminarReserva(r._id));
+          li.appendChild(btnEliminar);
+        }
+        ul.appendChild(li);
+      });
+    }
+
+    async function eliminarReserva(id) {
+      if (!confirm('¿Seguro que quieres eliminar esta reserva?')) return;
+      const res = await fetch(`http://localhost:3000/api/reservas/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        alert('Reserva eliminada');
+        cargarReservas();
+      } else {
+        alert('Error al eliminar reserva');
+      }
+    }
+
+    document.getElementById('formReserva').addEventListener('submit', async e => {
+      e.preventDefault();
+      const data = {
+        servicioId: document.getElementById('servicio').value,
+        fecha: document.getElementById('fecha').value,
+        hora: document.getElementById('hora').value
+      };
+      const res = await fetch('http://localhost:3000/api/reservas', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        alert('Reserva creada');
+        cargarReservas();
+      } else {
+        alert('Error creando reserva');
+      }
+    });
+
+    document.getElementById('formServicio').addEventListener('submit', async e => {
+      e.preventDefault();
+      const data = {
+        nombre: document.getElementById('nombreServicio').value
+      };
+      const res = await fetch('http://localhost:3000/api/servicios', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        alert('Servicio agregado');
+        cargarServicios();
+      } else {
+        alert('Error agregando servicio');
+      }
+    });
+
+    document.getElementById('btnLogout').addEventListener('click', () => {
+      localStorage.removeItem('token');
+      window.location.href = 'login.html';
+    });
+
+    (async () => {
+      await obtenerUsuario();
+      await cargarServicios();
+      await cargarReservas();
+    })();
+  </script>
+</body>
+</html>

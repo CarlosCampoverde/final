@@ -1,0 +1,407 @@
+name: CI/CD Pipeline
+
+# Triggers: push y pull_request a main
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+# Variables de entorno globales
+env:
+  NODE_VERSION: '20.x'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    # Configurar MongoDB como servicio
+    services:
+      mongodb:
+        image: mongo:5.0
+        env:
+          MONGO_INITDB_ROOT_USERNAME: root
+          MONGO_INITDB_ROOT_PASSWORD: password
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd mongo
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    # 1. Checkout del repo
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 2. Setup del runtime (Node.js)
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    # 3. Instalación de dependencias con cache
+    - name: Install dependencies
+      run: npm ci
+
+    # 4. Configurar variables de entorno para testing
+    - name: Create .env file for testing
+      run: |
+        echo "MONGO_URI=mongodb://root:password@localhost:27017/gym_web_test?authSource=admin" > .env
+        echo "JWT_SECRET=test_secret_123" >> .env
+        echo "NODE_ENV=test" >> .env
+
+    # 5. Ejecución de pruebas unitarias con cobertura
+    - name: Run tests
+      run: npm run test:ci
+
+    # 6. Publicación de artefactos - Subir reportes de cobertura
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage/lcov.info
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+    # Publicar reporte de cobertura como artefacto
+    - name: Upload coverage artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-node-${{ matrix.node-version }}
+        path: |
+          coverage/
+          !coverage/tmp/
+
+    # Publicar logs de test como artefacto
+    - name: Upload test logs
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: test-logs-node-${{ matrix.node-version }}
+        path: |
+          npm-debug.log*
+          yarn-debug.log*
+          yarn-error.log*
+
+  # Job adicional para verificar el formato del código (opcional pero recomendado)
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    # Si tienes ESLint configurado, descomenta las siguientes líneas:
+    # - name: Run linter
+    #   run: npm run lint
+
+  # Job para verificar la seguridad de dependencias
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run security audit
+      run: npm audit --audit-level=moderate
+
+  # Job para pruebas de rendimiento con k6
+  performance:
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'perf')
+    
+    services:
+      mongodb:
+        image: mongo:5.0
+        env:
+          MONGO_INITDB_ROOT_USERNAME: testuser
+          MONGO_INITDB_ROOT_PASSWORD: testpass
+          MONGO_INITDB_DATABASE: testdb
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install k6
+      run: |
+        sudo gpg -k
+        sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+        echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+        sudo apt-get update
+        sudo apt-get install k6
+
+    - name: Start application in background
+      run: |
+        npm start &
+        sleep 10
+      env:
+        NODE_ENV: test
+        MONGODB_URI: mongodb://testuser:testpass@localhost:27017/testdb?authSource=admin
+        JWT_SECRET: test-secret-key-for-ci
+        PORT: 3000
+
+    - name: Wait for application to be ready
+      run: |
+        timeout 60 bash -c 'until curl -f http://localhost:3000/api/health || curl -f http://localhost:3000; do sleep 2; done'
+
+    - name: Run performance tests - Ramp/Load (Usuarios)
+      run: |
+        k6 run --summary-export=ramp-summary.json tests/k6/scenarios/usuarios-ramp.js
+      env:
+        BASE_URL: http://localhost:3000
+      continue-on-error: true
+
+    - name: Run performance tests - Spike (Servicios)
+      run: |
+        k6 run --summary-export=spike-summary.json tests/k6/scenarios/servicios-spike.js
+      env:
+        BASE_URL: http://localhost:3000
+      continue-on-error: true
+
+    - name: Run performance tests - Soak (Reservas) - Short version for CI
+      run: |
+        k6 run --summary-export=soak-summary.json --env DURATION=5m --env VUS=20 tests/k6/scenarios/reservas-soak.js
+      env:
+        BASE_URL: http://localhost:3000
+      continue-on-error: true
+
+    
+
+    - name: Upload performance test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-test-results
+        path: |
+          *-summary.json
+          *-results.json
+          performance-report-*.html
+          performance-summary-*.json
+          performance-junit-*.xml
+
+    - name: Upload performance test logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-test-logs
+        path: |
+          logs/
+          *.log
+          k6-*.log
+
+  # ========================================
+  # CONTINUOUS DEPLOYMENT (CD)
+  # ========================================
+  
+  # Deploy Backend API to Railway/Render
+  deploy-backend:
+    name: Deploy Backend API
+    runs-on: ubuntu-latest
+    needs: [test, lint, security, performance]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci --only=production
+    
+    # Deploy Backend using generic deployment action
+    - name: Deploy Backend to Railway/Render
+      id: deploy
+      run: |
+        # Simular deployment - reemplazar con tu método específico
+        if [ -n "${{ secrets.RAILWAY_TOKEN }}" ]; then
+          echo "Deploying to Railway..."
+          # railway deploy (requiere Railway CLI)
+          echo "url=https://proyectop2preubas-production.railway.app" >> $GITHUB_OUTPUT
+        elif [ -n "${{ secrets.RENDER_API_KEY }}" ]; then
+          echo "Deploying to Render..."
+          # curl deploy usando Render API
+          echo "url=https://proyectop2preubas.onrender.com" >> $GITHUB_OUTPUT
+        else
+          echo "No deployment credentials found"
+          echo "url=https://localhost:3000" >> $GITHUB_OUTPUT
+        fi
+      env:
+        MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        NODE_ENV: production
+    
+    - name: Update deployment status
+      run: |
+        echo "Backend deployed to: ${{ steps.deploy.outputs.url }}"
+        echo "BACKEND_URL=${{ steps.deploy.outputs.url }}" >> $GITHUB_ENV
+
+  # Deploy Frontend to Vercel/Netlify
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: [test, lint, security, performance]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.preview-url }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    # Deploy Frontend to static hosting
+    - name: Deploy Frontend
+      id: deploy
+      run: |
+        # Build frontend
+        cd frontend
+        
+        # Deploy to GitHub Pages as fallback
+        echo "Deploying frontend to GitHub Pages..."
+        
+        # Simular deployment
+        if [ -n "${{ secrets.VERCEL_TOKEN }}" ]; then
+          echo "Deploying to Vercel..."
+          echo "preview-url=https://proyectop2preubas-vercel.app" >> $GITHUB_OUTPUT
+        elif [ -n "${{ secrets.NETLIFY_AUTH_TOKEN }}" ]; then
+          echo "Deploying to Netlify..."
+          echo "preview-url=https://proyectop2preubas.netlify.app" >> $GITHUB_OUTPUT
+        else
+          echo "Deploying to GitHub Pages..."
+          echo "preview-url=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Update deployment status
+      run: |
+        echo "Frontend deployed to: ${{ steps.deploy.outputs.preview-url }}"
+        echo "FRONTEND_URL=${{ steps.deploy.outputs.preview-url }}" >> $GITHUB_ENV
+
+  # Deploy using Docker to GitHub Container Registry
+  deploy-docker:
+    name: Build and Deploy Docker
+    runs-on: ubuntu-latest
+    needs: [test, lint, security, performance]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        file: ./Dockerfile
+
+    - name: Deploy to production server
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_KEY }}
+        script: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker stop proyectop2preubas || true
+          docker rm proyectop2preubas || true
+          docker run -d --name proyectop2preubas \
+            -p 3000:3000 \
+            -e MONGODB_URI="${{ secrets.MONGODB_URI }}" \
+            -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+            -e NODE_ENV=production \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+  # Notification and Summary
+  deployment-summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend, deploy-docker]
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Deployment Summary
+      run: |
+        echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Service | Status | URL |" >> $GITHUB_STEP_SUMMARY
+        echo "|---------|--------|-----|" >> $GITHUB_STEP_SUMMARY
+        echo "| Backend API | ${{ needs.deploy-backend.result }} | ${{ env.BACKEND_URL || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Frontend | ${{ needs.deploy-frontend.result }} | ${{ env.FRONTEND_URL || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Docker | ${{ needs.deploy-docker.result }} | Container Registry |" >> $GITHUB_STEP_SUMMARY

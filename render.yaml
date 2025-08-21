@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: proyectop2preubas-backend
+    runtime: node
+    plan: free
+    buildCommand: npm ci --only=production
+    startCommand: node backend/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
