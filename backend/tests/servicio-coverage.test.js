@@ -38,15 +38,16 @@ describe('Servicio Coverage Tests', () => {
 
     it('debería crear un servicio directamente', async () => {
       // La base de datos ya está limpia por beforeEach
+      const nombreUnico = `CoverageTest_${Date.now()}_${Math.random()}`;
       const nuevoServicio = new Servicio({
-        nombre: 'Servicio Test Coverage',
+        nombre: nombreUnico,
         descripcion: 'Descripción test coverage'
       });
       const servicioGuardado = await nuevoServicio.save();
       
       // Verificar que se guardó correctamente
       expect(servicioGuardado._id).toBeDefined();
-      expect(servicioGuardado.nombre).toBe('Servicio Test Coverage');
+      expect(servicioGuardado.nombre).toBe(nombreUnico);
 
       // Hacer la petición HTTP
       const response = await request(app)
@@ -55,7 +56,7 @@ describe('Servicio Coverage Tests', () => {
       expect(response.status).toBe(200);
       expect(Array.isArray(response.body)).toBe(true);
       expect(response.body.length).toBe(1);
-      expect(response.body[0].nombre).toBe('Servicio Test Coverage');
+      expect(response.body[0].nombre).toBe(nombreUnico);
       expect(response.body[0].descripcion).toBe('Descripción test coverage');
     });
 
