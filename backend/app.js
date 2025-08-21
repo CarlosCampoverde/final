@@ -27,12 +27,54 @@ app.get('/', (req, res) => {
   });
 });
 
-// Health check endpoint for k6 tests
-app.get('/api/health', (req, res) => {
+// Health check endpoint for Railway and k6 tests
+app.get('/api/health', async (req, res) => {
+  try {
+    // Verificar conexión a MongoDB
+    const mongoose = require('mongoose');
+    const dbStatus = mongoose.connection.readyState;
+    
+    // Estados: 0 = desconectado, 1 = conectado, 2 = conectando, 3 = desconectando
+    const dbStatusText = {
+      0: 'disconnected',
+      1: 'connected', 
+      2: 'connecting',
+      3: 'disconnecting'
+    };
+
+    const healthData = {
+      status: dbStatus === 1 ? 'ok' : 'warning',
+      timestamp: new Date().toISOString(),
+      service: 'ProyectoP2Preubas API',
+      database: {
+        status: dbStatusText[dbStatus] || 'unknown',
+        connected: dbStatus === 1
+      },
+      environment: process.env.NODE_ENV || 'development',
+      uptime: process.uptime()
+    };
+
+    // Si la DB está conectada, responder 200, sino 503
+    const statusCode = dbStatus === 1 ? 200 : 503;
+    res.status(statusCode).json(healthData);
+    
+  } catch (error) {
+    res.status(503).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      service: 'ProyectoP2Preubas API',
+      error: 'Health check failed',
+      details: error.message
+    });
+  }
+});
+
+// Health check simple para Railway (sin verificar DB)
+app.get('/health', (req, res) => {
   res.status(200).json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    service: 'ProyectoP2Preubas API'
+    status: 'ok',
+    service: 'ProyectoP2Preubas API',
+    timestamp: new Date().toISOString()
   });
 });
 
